@@ -1,1 +1,3 @@
 requests>=2.14.2
+GitPython
+appdirs

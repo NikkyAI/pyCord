@@ -3,6 +3,7 @@
 
 import logging
 import sys
+import yaml
 
 from libcord import libcord, command, Message
 
@@ -43,7 +44,11 @@ def test_defaults(number: int, something: str = None, val: str = "val1"):
 # TODO: register core commands
 # TODO: import modules (use config)
 
-cord: libcord = libcord(token="password")
+config = None
+with open('config.yaml') as f: 
+    config = yaml.load(f)
+
+cord: libcord = libcord(**config['core'])
 
 # test wrapper method
 
@@ -53,10 +58,10 @@ def test(cmd: str) -> str:
     print(f"result `{result}`")
     return result
 
-test(cmd="test saf fd<fd ewre")
-test(cmd='test2 "printed 2 times" 2 4')
-test(cmd='test2 "printed 2 times"" asdsd 4')
-test(cmd="test2 -h")
-test(cmd="test2 1 1")
+# test(cmd="test saf fd<fd ewre")
+# test(cmd='test2 "printed 2 times" 2 4')
+# test(cmd='test2 "printed 2 times"" asdsd 4')
+# test(cmd="test2 -h")
+# test(cmd="test2 1 1")
 
-# cord.run()
+cord.run()

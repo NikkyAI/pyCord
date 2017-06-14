@@ -1,0 +1,4 @@
+core:
+  username: botname
+  token: 'token'
+  host: nikky.moe #default: localhost

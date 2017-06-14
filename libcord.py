@@ -1,3 +1,4 @@
+from gitwiki import Gitwiki
 import argparse
 from collections import OrderedDict
 import inspect
@@ -12,6 +13,7 @@ import datetime
 from time import sleep
 import traceback
 import yaml
+from collections import namedtuple
 
 module_logger = logging.getLogger('libcord.core')
 
@@ -32,7 +34,7 @@ class Message(object):
         self.timestamp = timestamp
 
     def __repr__(self):
-        return yaml.dump(self, default_flow_style=False)
+        return yaml.dump(self, default_flow_style=True)
 
     def create_response(self, response: str):
         #TODO: append original username in front of message string?
@@ -51,6 +53,16 @@ class CommandContext(object):
 
 
 CommandContext.NONE = CommandContext(message = None)
+
+class CommandResult(object):
+    def __init__(self, result: str, cmd: str = None):
+        self.result = result
+        self.cmd = cmd
+    
+    NONE = None
+
+    def __repr__(self):
+        return yaml.dump(self, default_flow_style=False)
 
 class Command:
     def __init__(self):
@@ -246,19 +258,19 @@ class Command:
             else:
                 self.func_context_map[func] = False
             return func
-    def call(self, cmd: str, context: CommandContext = CommandContext.NONE):
+    def call(self, cmd: str, context: CommandContext = CommandContext.NONE) -> CommandResult:
         try:
             tokens = shlex.split(cmd)
             prog = tokens[0]
             args = tokens[1:]
             func = self.func_map.get(prog)
             if func:
-                return func(context = context, *args)
+                return CommandResult(result=func(context = context, *args), cmd=prog)
             else:
-                return f"no function {prog} found"
+                return CommandResult(result=f"no function {prog} found", cmd="")
         except Exception as ex:
             module_logger.exception("Error parsing input")
-            return f"Error parsing input: {str(ex)}"
+            return self.CommandResult(result=f"Error parsing input: {str(ex)}", cmd="")
             # return traceback.format_exc() #TODO: get better message
 
 command = Command()
@@ -270,10 +282,14 @@ def method_with_custom_name(my_arg):
     return "The args is: " + my_arg
 
 class libcord:
-    def __init__(self, prefix: str = '!', username: str = 'cord', token: str = None):
+    def __init__(self, prefix: str = '!', username: str = 'cord', token: str = None, host: str = 'localhost', port: int = 4242, protocol: str = 'http'):
         self.prefix = prefix
         self.username = username
+        self.host = host
+        self.port = port
+        self.protocol = protocol
         self.session = requests.Session()
+        self.wiki = Gitwiki(url="git@github.com:NikkyAI/pyCord.wiki.git", web_url_base="https://github.com/NikkyAI/pyCord/wiki")
         if token:
             self.session.headers = {'Authorization': f"Bearer {token}"}
     call = command.call
@@ -285,13 +301,15 @@ class libcord:
         dict_dump = {key: dict_dump[key] for key in dict_dump if dict_dump[key]}
         module_logger.debug(f"message: {dict_dump}")
         module_logger.debug(f"message as json: {json.dumps(dict_dump)}")
-        response = self.session.post('http://localhost:4242/api/message', json=dict_dump)
+        url = f"{self.protocol}://{self.host}:{self.port}/api/message"
+        response = self.session.post(url, json=dict_dump)
         response.raise_for_status()
 
     def run(self):
         while True:
             try:
-                response = self.session.get("http://localhost:4242/api/messages")
+                url = f"{self.protocol}://{self.host}:{self.port}/api/messages"
+                response = self.session.get(url)
                 response.raise_for_status()
                 if response.content:
                     msg_list = response.json()
@@ -303,11 +321,16 @@ class libcord:
                         module_logger.debug(f"text: {text}")
                         if text.startswith(self.prefix):
                             module_logger.debug(f"command: '{text}' by {message.username}")
-                            ret = command.call(cmd=text[1:], context=CommandContext(message))
+                            cmd_result: CommandResult = command.call(cmd=text[1:], context=CommandContext(message))
                             # response = message.username + ": " + ret
-                            if ret:
-                                module_logger.debug(f"return value: {ret}")
-                                self.send(message.create_response(ret))
+                            if cmd_result.result:
+                                module_logger.debug(f"return value: {cmd_result.result}")
+                                if '\n' in cmd_result.result:
+                                    #TODO: if return value is multiline.. git wiki
+                                    test = self.wiki.upload(f"command/{cmd_result.cmd}", cmd_result.result)
+                                    self.send(message.create_response(test))
+                                else:
+                                    self.send(message.create_response(cmd_result.result))
 
             except requests.exceptions.ConnectionError as err:
                 module_logger.exception("api endpoint not running")
