@@ -41,6 +41,12 @@ def test_defaults(number: int, something: str = None, val: str = "val1"):
     """test the docstring"""
     print(f"testing defaults = number: { number }, something = { something }, val = {val}")
 
+@command.register("m")
+def test_multiline(i: int):
+    """test the docstring"""
+    print(f"testing multiline")
+    print("\nnewline"*i)
+
 # TODO: register core commands
 # TODO: import modules (use config)
 

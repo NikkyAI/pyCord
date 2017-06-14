@@ -55,10 +55,11 @@ class CommandContext(object):
 CommandContext.NONE = CommandContext(message = None)
 
 class CommandResult(object):
-    def __init__(self, result: str, cmd: str = None):
-        self.result = result
+    def __init__(self, output: str, cmd: str = None, is_help: bool = False):
+        self.output = output
         self.cmd = cmd
-    
+        self.is_help = is_help
+
     NONE = None
 
     def __repr__(self):
@@ -148,10 +149,11 @@ class Command:
                     data['type'] = argspec.annotations[dest]
                 module_logger.debug(f"generating default argument for non decorated argument: {dest}")
                 add_argument(argument=dest, data=data)
+
             '''
             splits args and executes method, handles capturing output
             '''
-            def execute(*args: str, context: CommandContext = None):
+            def execute(*args: str, context: CommandContext = None) -> CommandResult:
                 module_logger.debug(f"\ncalling: {parser.prog}")
                 module_logger.debug(f"args: {args}")
 
@@ -172,7 +174,7 @@ class Command:
                 def help_wrapper(file=None):
                     self.prints_help = True
                     old_help(file=file)
-                    
+
                 parser.print_help = help_wrapper
 
                 old_stdout = sys.stdout
@@ -200,6 +202,7 @@ class Command:
                 if output:
                     # fancy_output = "> " + output.replace('\n', '\n> ')
                     module_logger.debug(f"help output: \n{output}")
+                    return CommandResult(output=output, is_help=True)
                 else:
 
                     # for argument, value in arguments.items():
@@ -225,7 +228,7 @@ class Command:
                     module_logger.debug(f"command output: {output}")
 
                 module_logger.debug(f"arguments: {arguments}")
-                return output
+                return CommandResult(output=output)
             self.func_map[prog] = execute
             return execute
         return func_wrapper
@@ -251,6 +254,7 @@ class Command:
             self.func_arg_map[func] = arg_dict
             return func
         return func_wrapper
+
     def context(self, command_context, enabled: bool = True):
         def func_wrapper(func):
             if enabled and command_context:
@@ -258,6 +262,7 @@ class Command:
             else:
                 self.func_context_map[func] = False
             return func
+
     def call(self, cmd: str, context: CommandContext = CommandContext.NONE) -> CommandResult:
         try:
             tokens = shlex.split(cmd)
@@ -265,12 +270,14 @@ class Command:
             args = tokens[1:]
             func = self.func_map.get(prog)
             if func:
-                return CommandResult(result=func(context = context, *args), cmd=prog)
+                exec_result: CommandResult = func(context=context, *args)
+                exec_result.cmd = prog
+                return exec_result
             else:
-                return CommandResult(result=f"no function {prog} found", cmd="")
+                return CommandResult(output=f"no function {prog} found", cmd=None)
         except Exception as ex:
             module_logger.exception("Error parsing input")
-            return self.CommandResult(result=f"Error parsing input: {str(ex)}", cmd="")
+            return CommandResult(output=f"Error parsing input: {str(ex)}", cmd=None)
             # return traceback.format_exc() #TODO: get better message
 
 command = Command()
@@ -282,12 +289,13 @@ def method_with_custom_name(my_arg):
     return "The args is: " + my_arg
 
 class libcord:
-    def __init__(self, prefix: str = '!', username: str = 'cord', token: str = None, host: str = 'localhost', port: int = 4242, protocol: str = 'http'):
+    def __init__(self, prefix: str = '!', username: str = 'cord', token: str = None, host: str = 'localhost', port: int = 4242, protocol: str = 'http', pastebin: dict = {}):
         self.prefix = prefix
         self.username = username
         self.host = host
         self.port = port
         self.protocol = protocol
+        self.pastebin = pastebin
         self.session = requests.Session()
         self.wiki = Gitwiki(url="git@github.com:NikkyAI/pyCord.wiki.git", web_url_base="https://github.com/NikkyAI/pyCord/wiki")
         if token:
@@ -323,14 +331,19 @@ class libcord:
                             module_logger.debug(f"command: '{text}' by {message.username}")
                             cmd_result: CommandResult = command.call(cmd=text[1:], context=CommandContext(message))
                             # response = message.username + ": " + ret
-                            if cmd_result.result:
-                                module_logger.debug(f"return value: {cmd_result.result}")
-                                if '\n' in cmd_result.result:
-                                    #TODO: if return value is multiline.. git wiki
-                                    test = self.wiki.upload(f"command/{cmd_result.cmd}", cmd_result.result)
-                                    self.send(message.create_response(test))
+                            if cmd_result.output:
+                                module_logger.debug(f"return value: {cmd_result.output}")
+                                if '\n' in cmd_result.output:
+                                    # if cmd_result.help or not self.pastebin or 'token' not in self.pastebin:
+                                        #TODO: if return value is multiline.. git wiki
+                                        github_url = self.wiki.upload(f"command/{cmd_result.cmd}", cmd_result.output, is_help=cmd_result.is_help)
+                                        self.send(message.create_response(github_url))
+                                    # else:
+                                    #     TODO: fix pastebin or similar service
+                                    #     url = pastebin.paste(self.pastebin['token'], cmd_result.output, paste_name=cmd_result.cmd + "_output", paste_private="unlisted", paste_expire_date='1H', paste_format=None)
+                                    #     self.send(message.create_response(url))
                                 else:
-                                    self.send(message.create_response(cmd_result.result))
+                                    self.send(message.create_response(cmd_result.output))
 
             except requests.exceptions.ConnectionError as err:
                 module_logger.exception("api endpoint not running")

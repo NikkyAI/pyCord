@@ -1,7 +1,10 @@
 import git
 from pathlib import Path
 import appdirs
+import logging
 
+module_logger = logging.getLogger('libcord.gitwiki')
+#TODO: add module_logger
 
 class Gitwiki:
     """
@@ -19,9 +22,11 @@ class Gitwiki:
         else:
             self.repo = git.Repo.clone_from(url, self.wiki_path)
 
-    def upload(self, filename: str, content: str):
+    def upload(self, filename: str, content: str, is_help: bool):
         self.reset()
         file_path: Path = Path(f"{filename}.txt")
+        if is_help:
+            file_path = Path("help" ,file_path)
         full_path = Path(self.wiki_path / file_path)
         file_dir = Path(full_path.parent)
         file_dir.mkdir(exist_ok=True, parents=True)
@@ -29,9 +34,11 @@ class Gitwiki:
             text_file.write(content)
         self.repo.index.add([str(file_path)])
         # get names of all changed files
-        diff = self.repo.git.diff('HEAD~1..HEAD', name_only=True)
+        # diff = self.repo.git.diff('HEAD~1..HEAD', name_only=True)
+        diff = self.repo.index.diff(self.repo.head.commit)
         if diff:
-            print("changed files " + diff)
+            for diff_entry in diff:
+                module_logger.debug(diff_entry)
             self.repo.index.commit(f"added {filename}")
             self.repo.remotes.origin.push()
         return self.web_url_base + "/" + "/".join(file_path.parts)
