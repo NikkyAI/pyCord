@@ -1,4 +1,4 @@
-from libcord.libcord import LibCord, CommandHandler
+from libcord import LibCord, CommandHandler
 
 def init(cord: LibCord):
     search: CommandHandler = cord.create_handler('search')

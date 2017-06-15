@@ -1,4 +1,4 @@
-from libcord.libcord import LibCord, Message, CommandHandler
+from libcord import LibCord, Message, CommandHandler
 
 def init(cord: LibCord):
     test: CommandHandler = cord.create_handler('test')

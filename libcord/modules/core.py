@@ -1,4 +1,4 @@
-from libcord.libcord import LibCord, Command, ResultType
+from libcord import LibCord, Command, ResultType
 from importlib import reload
 
 def init(cord: LibCord):

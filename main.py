@@ -5,7 +5,7 @@ import logging
 import sys
 import yaml
 
-from libcord.libcord import LibCord
+from libcord import LibCord
 
 root = logging.getLogger()
 root.setLevel(logging.INFO)

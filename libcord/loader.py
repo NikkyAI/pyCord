@@ -1,5 +1,5 @@
 import sys
-from libcord.libcord import LibCord
+from libcord import LibCord
 from .modules import modules
 from importlib import reload
 import logging
