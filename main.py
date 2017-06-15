@@ -5,7 +5,7 @@ import logging
 import sys
 import yaml
 
-from libcord import libcord, command, Message
+from libcord.libcord import LibCord
 
 root = logging.getLogger()
 root.setLevel(logging.INFO)
@@ -19,33 +19,33 @@ root.addHandler(ch)
 
 # Ccommands
 
-@command.register("test")
-@command.argument(dest="args", nargs='+')
-def test_command(args):
-    print(f"running test command, args: {args}")
+# @general.register("test")
+# @general.argument(dest="args", nargs='+')
+# def test_command(args):
+#     print(f"running test command, args: {args}")
 
-@command.register(prog="test2")
-@command.argument(dest="name", metavar='NAME')
-def test_command_2(name: str, number: int, random):
-    """test number 2, does this end up in --help ?"""
-    print("running test command 2, name: " + name)
-    print((name + " ") * number)
-    print(f"random: {random} {type(random)}")
+# @general.register(prog="test2")
+# @general.argument(dest="name", metavar='NAME')
+# def test_command_2(name: str, number: int, random):
+#     """test number 2, does this end up in --help ?"""
+#     print("running test command 2, name: " + name)
+#     print((name + " ") * number)
+#     print(f"random: {random} {type(random)}")
 
-@command.register("c")
-def test_context(context: Message):
-    print(f"context = { context }")
+# @general.register("c")
+# def test_context(context: Message):
+#     print(f"context = { context }")
 
-@command.register("d")
-def test_defaults(number: int, something: str = None, val: str = "val1"):
-    """test the docstring"""
-    print(f"testing defaults = number: { number }, something = { something }, val = {val}")
+# @general.register("d")
+# def test_defaults(number: int, something: str = None, val: str = "val1"):
+#     """test the docstring"""
+#     print(f"testing defaults = number: { number }, something = { something }, val = {val}")
 
-@command.register("m")
-def test_multiline(i: int):
-    """test the docstring"""
-    print(f"testing multiline")
-    print("\nnewline"*i)
+# @general.register("m")
+# def test_multiline(i: int):
+#     """test the docstring"""
+#     print(f"testing multiline")
+#     print("\nnewline"*i)
 
 # TODO: register core commands
 # TODO: import modules (use config)
@@ -54,13 +54,13 @@ config = None
 with open('config.yaml') as f: 
     config = yaml.load(f)
 
-cord: libcord = libcord(**config['core'])
+cord: LibCord = LibCord(**config['core'])
 
 # test wrapper method
 
 def test(cmd: str) -> str:
     print(f"calling `{cmd}`")
-    result = command.call(cmd=cmd)
+    result = cord.call(cmd=cmd)
     print(f"result `{result}`")
     return result
 
@@ -70,4 +70,4 @@ def test(cmd: str) -> str:
 # test(cmd="test2 -h")
 # test(cmd="test2 1 1")
 
-cord.run()
+cord.start()

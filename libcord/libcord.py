@@ -1,6 +1,8 @@
-from gitwiki import Gitwiki
+from collections import namedtuple
+from typing import Dict, Callable, Any, Iterable
 import argparse
 from collections import OrderedDict
+from enum import Enum
 import inspect
 import logging
 from io import StringIO
@@ -13,7 +15,12 @@ import datetime
 from time import sleep
 import traceback
 import yaml
-from collections import namedtuple
+import copy
+
+from libcord.gitwiki import Gitwiki
+# from libcord.loader import ModLoader
+
+# from .modules import *
 
 module_logger = logging.getLogger('libcord.core')
 
@@ -65,19 +72,44 @@ class CommandResult(object):
     def __repr__(self):
         return yaml.dump(self, default_flow_style=False)
 
-class Command:
-    def __init__(self):
-        self.func_map = {}
+class ResultType(Enum):
+    DEFAULT = 0
+    HELP = 1
+
+class Command(object):
+    def __init__(self, func: Callable[[Any], Any] = None, parser: argparse.ArgumentParser = None):
+        self.func = func
+        self.parser = parser
+
+    NONE = None
+
+    def __repr__(self):
+        return yaml.dump(self, default_flow_style=False)
+    
+    def description(self):
+        return self.parser.description
+
+class CommandHandler:
+    def __init__(self, name: str):
+        self.name = name #TODO: use for printing
+        self.cmd_map = dict()
         self.func_arg_map = {}
         self.func_context_map = {}
 
     def register(self, prog: str, description: str = None):
+        """
+        registers a function as a given command name, with a optional description
+        """
         def func_wrapper(func):
             argspec: inspect.FullArgSpec = inspect.getfullargspec(func)
             descript = str(description)
+            args = {'prog': prog}
             if not description and func.__doc__:
-                descript = func.__doc__
-            parser = argparse.ArgumentParser(prog=prog, description=descript)
+                # module_logger.debug(f"description: {func.__doc__.strip()}")
+                descript = func.__doc__.strip()
+                args['description'] = descript
+            # parser = argparse.ArgumentParser(prog=prog, description=descript)
+            parser = argparse.ArgumentParser(**args)
             arg_dict = self.func_arg_map.get(func, OrderedDict())
 
             command_context = self.func_context_map.get(func, 'context')
@@ -188,6 +220,7 @@ class Command:
                     arguments: dict = vars(namespace)
                 except TypeError as typerr:
                     module_logger.exception("type error during parsing of arguments")
+                    print(traceback.format_exc())
                     # print(type(typerr))
                     # print(typerr)
 
@@ -198,6 +231,7 @@ class Command:
                     sys.stdout = old_stdout
 
                 output = mystdout.getvalue().rstrip()
+                is_help = False
 
                 if output:
                     # fancy_output = "> " + output.replace('\n', '\n> ')
@@ -213,12 +247,17 @@ class Command:
                     if command_context:
                         module_logger.debug(f"command context: {command_context}")
                         arguments[command_context] = context
-
+                    
                     try:
                         sys.stdout = mystdout = StringIO()
 
-                        func(**arguments)
-
+                        ret = func(**arguments)
+                        if type(ret) is str:
+                            print(ret)
+                        elif type(ret) is ResultType:
+                            if ret == ResultType.HELP:
+                                is_help = True
+                        # TODO check if it is HELP
                     except Exception as ex:
                         module_logger.exception("exception executing function")
                         print(traceback.format_exc())
@@ -228,8 +267,11 @@ class Command:
                     module_logger.debug(f"command output: {output}")
 
                 module_logger.debug(f"arguments: {arguments}")
-                return CommandResult(output=output)
-            self.func_map[prog] = execute
+                return CommandResult(output=output, is_help=is_help)
+            cmd: Command = self.cmd_map.get(prog, Command())
+            cmd.func = execute
+            cmd.parser = parser
+            self.cmd_map[prog] = cmd
             return execute
         return func_wrapper
 
@@ -268,7 +310,8 @@ class Command:
             tokens = shlex.split(cmd)
             prog = tokens[0]
             args = tokens[1:]
-            func = self.func_map.get(prog)
+            cmd: Command = self.cmd_map.get(prog)
+            func = cmd.func
             if func:
                 exec_result: CommandResult = func(context=context, *args)
                 exec_result.cmd = prog
@@ -279,28 +322,36 @@ class Command:
             module_logger.exception("Error parsing input")
             return CommandResult(output=f"Error parsing input: {str(ex)}", cmd=None)
             # return traceback.format_exc() #TODO: get better message
+    
+    def list(self) -> Dict[str, Command]:
+        """
+        shallow copy of all registered commands
+        """
+        return copy.copy(self.cmd_map)
 
-command = Command()
-
-# example
-
-@command.register("example")
-def method_with_custom_name(my_arg):
-    return "The args is: " + my_arg
-
-class libcord:
+class LibCord:
     def __init__(self, prefix: str = '!', username: str = 'cord', token: str = None, host: str = 'localhost', port: int = 4242, protocol: str = 'http', pastebin: dict = {}):
+        from libcord.loader import ModLoader
+        
         self.prefix = prefix
         self.username = username
         self.host = host
         self.port = port
         self.protocol = protocol
         self.pastebin = pastebin
+
+        self.loader = ModLoader(self)
+
+        self.cmd_handlers = dict()
         self.session = requests.Session()
         self.wiki = Gitwiki(url="git@github.com:NikkyAI/pyCord.wiki.git", web_url_base="https://github.com/NikkyAI/pyCord/wiki")
         if token:
             self.session.headers = {'Authorization': f"Bearer {token}"}
-    call = command.call
+    
+    def create_handler(self, name: str) -> CommandHandler:
+        handler: CommandHandler = CommandHandler(name=name)
+        self.cmd_handlers[name] = handler
+        return handler
 
     def send(self, message: Message):
         if not message.username:
@@ -312,6 +363,36 @@ class libcord:
         url = f"{self.protocol}://{self.host}:{self.port}/api/message"
         response = self.session.post(url, json=dict_dump)
         response.raise_for_status()
+    
+    def start(self):
+        self.loader.load_all()
+        self.run()
+
+    def call(self, cmd: str, context: CommandContext = CommandContext.NONE) -> CommandResult:
+        try:
+            tokens = shlex.split(cmd)
+            prog = tokens[0]
+            args = tokens[1:]
+            cmd: Command = None
+            for handler_name, cmd_handler in self.cmd_handlers.items():
+                if prog in cmd_handler.cmd_map:
+                    cmd = cmd_handler.cmd_map[prog]
+                    break
+
+            if not cmd:
+                module_logger.error(f"command '{prog}' not found")
+                return CommandResult(output=f"no function {prog} found", cmd=None)
+            func = cmd.func
+            if func:
+                exec_result: CommandResult = func(context=context, *args)
+                exec_result.cmd = prog
+                return exec_result
+            else:
+                return CommandResult(output=f"no function {prog} found", cmd=None)
+        except Exception as ex:
+            module_logger.exception("Error parsing input")
+            return CommandResult(output=f"Error parsing input: {str(ex)}", cmd=None)
+            # return traceback.format_exc() #TODO: get better message
 
     def run(self):
         while True:
@@ -329,7 +410,9 @@ class libcord:
                         module_logger.debug(f"text: {text}")
                         if text.startswith(self.prefix):
                             module_logger.debug(f"command: '{text}' by {message.username}")
-                            cmd_result: CommandResult = command.call(cmd=text[1:], context=CommandContext(message))
+                            cmd=text[1:]
+                            cmd_result: CommandResult = self.call(cmd=cmd, context=CommandContext(message))
+
                             # response = message.username + ": " + ret
                             if cmd_result.output:
                                 module_logger.debug(f"return value: {cmd_result.output}")
