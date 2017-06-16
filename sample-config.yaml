@@ -1,4 +1,10 @@
-core:
-  username: botname
-  token: 'token'
-  host: nikky.moe #default: localhost
+prefix: '.' # command prefix
+username: botname
+token: 'token' # matterbridge api token
+host: nikky.moe # default: localhost
+
+auth:
+  gateway: auth-api #gatway connecting to authentication services
+
+pastebin:
+  token: 21234567890qwertzuiopadfghjklyxcvbm #pastebin api token, not currently used 

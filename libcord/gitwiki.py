@@ -23,9 +23,9 @@ class Gitwiki:
         else:
             self.repo = git.Repo.clone_from(url, self.wiki_path)
 
-    def upload(self, filename: str, content: str, is_help: bool):
+    def upload(self, filename: str, content: str, is_help: bool, file_extension: str = 'md'):
         self.reset()
-        file_path: Path = Path(f"{filename}.txt")
+        file_path: Path = Path(f"{filename}.{file_extension}")
         if is_help:
             file_path = Path("help" ,file_path)
         full_path = Path(self.wiki_path / file_path)

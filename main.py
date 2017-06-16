@@ -17,44 +17,11 @@ formatter = logging.Formatter('[%(asctime)s | %(name)s | %(levelname)s] %(messag
 ch.setFormatter(formatter)
 root.addHandler(ch)
 
-# Ccommands
-
-# @general.register("test")
-# @general.argument(dest="args", nargs='+')
-# def test_command(args):
-#     print(f"running test command, args: {args}")
-
-# @general.register(prog="test2")
-# @general.argument(dest="name", metavar='NAME')
-# def test_command_2(name: str, number: int, random):
-#     """test number 2, does this end up in --help ?"""
-#     print("running test command 2, name: " + name)
-#     print((name + " ") * number)
-#     print(f"random: {random} {type(random)}")
-
-# @general.register("c")
-# def test_context(context: Message):
-#     print(f"context = { context }")
-
-# @general.register("d")
-# def test_defaults(number: int, something: str = None, val: str = "val1"):
-#     """test the docstring"""
-#     print(f"testing defaults = number: { number }, something = { something }, val = {val}")
-
-# @general.register("m")
-# def test_multiline(i: int):
-#     """test the docstring"""
-#     print(f"testing multiline")
-#     print("\nnewline"*i)
-
-# TODO: register core commands
-# TODO: import modules (use config)
-
 config = None
 with open('config.yaml') as f: 
     config = yaml.load(f)
 
-cord: LibCord = LibCord(**config['core'])
+cord: LibCord = LibCord(**config)
 
 # test wrapper method
 

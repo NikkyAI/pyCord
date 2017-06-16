@@ -11,43 +11,18 @@ import requests
 import requests.exceptions
 import shlex
 import sys
-import datetime
 from time import sleep
 import traceback
 import yaml
 import copy
 
-from libcord.gitwiki import Gitwiki
-# from libcord.loader import ModLoader
-
-# from .modules import *
+from .message import Message
+from .gitwiki import Gitwiki
+from .authenticator import Authenticator
 
 module_logger = logging.getLogger('libcord.core')
 
-class Message(object):
 
-# {'text': '!test --help', 'channel': 'bridge-test', 'username': 'Nikky', 'avatar': 'https://cdn.discordapp.com/avatars/11222862436
-# 6575616/6c8d3b490bd3e56afc2b2e191f9c0767.jpg', 'account': 'discord.teamdev', 'event': '', 'protocol': 'discord', 'gateway': 'test
-# 2', 'timestamp': '2017-06-06T22:26:08.759413856+02:00'}
-    def __init__(self, text: str, channel: str = None, username: str = None, avatar: str = None, account: str = None, event: str = None, protocol: str = None, gateway: str = None, timestamp: datetime = None):
-        self.text = text
-        self.channel = channel
-        self.username = username
-        self.avatar = avatar
-        self.account = account
-        self.event = event
-        self.protocol = protocol
-        self.gateway = gateway
-        self.timestamp = timestamp
-
-    def __repr__(self):
-        return yaml.dump(self, default_flow_style=True)
-
-    def create_response(self, response: str):
-        #TODO: append original username in front of message string?
-        response_message = Message(text = response, gateway = self.gateway)
-        # self.libcord.send(response_message)
-        return response_message
 
 class CommandContext(object):
     def __init__(self, message: Message):
@@ -330,15 +305,22 @@ class CommandHandler:
         return copy.copy(self.cmd_map)
 
 class LibCord:
-    def __init__(self, prefix: str = '!', username: str = 'cord', token: str = None, host: str = 'localhost', port: int = 4242, protocol: str = 'http', pastebin: dict = {}):
+    def __init__(self, username, prefix: str = '.', token: str = None, host: str = 'localhost', port: int = 4242, pastebin: dict = None, auth: dict = None):
         from libcord.loader import ModLoader
         
+        if not username:
+            raise TypeError("username required")
+
         self.prefix = prefix
         self.username = username
         self.host = host
         self.port = port
-        self.protocol = protocol
-        self.pastebin = pastebin
+
+        # self.pastebin = pastebin
+
+        self.auth = None
+        if auth:
+            self.auth = Authenticator(send=self.send, **auth)
 
         self.loader = ModLoader(self)
 
@@ -360,7 +342,7 @@ class LibCord:
         dict_dump = {key: dict_dump[key] for key in dict_dump if dict_dump[key]}
         module_logger.debug(f"message: {dict_dump}")
         module_logger.debug(f"message as json: {json.dumps(dict_dump)}")
-        url = f"{self.protocol}://{self.host}:{self.port}/api/message"
+        url = f"http://{self.host}:{self.port}/api/message"
         response = self.session.post(url, json=dict_dump)
         response.raise_for_status()
     
@@ -397,7 +379,7 @@ class LibCord:
     def run(self):
         while True:
             try:
-                url = f"{self.protocol}://{self.host}:{self.port}/api/messages"
+                url = f"http://{self.host}:{self.port}/api/messages"
                 response = self.session.get(url)
                 response.raise_for_status()
                 if response.content:
@@ -405,28 +387,33 @@ class LibCord:
                     for message_dict in msg_list:
                         message: Message = Message(**message_dict)
                         # message.libcord = self
-                        module_logger.debug(message)
-                        text: str = message.text
-                        module_logger.debug(f"text: {text}")
-                        if text.startswith(self.prefix):
-                            module_logger.debug(f"command: '{text}' by {message.username}")
-                            cmd=text[1:]
-                            cmd_result: CommandResult = self.call(cmd=cmd, context=CommandContext(message))
-
-                            # response = message.username + ": " + ret
-                            if cmd_result.output:
-                                module_logger.debug(f"return value: {cmd_result.output}")
-                                if '\n' in cmd_result.output:
-                                    # if cmd_result.help or not self.pastebin or 'token' not in self.pastebin:
-                                        #TODO: if return value is multiline.. git wiki
-                                        github_url = self.wiki.upload(f"command/{cmd_result.cmd}", cmd_result.output, is_help=cmd_result.is_help)
-                                        self.send(message.create_response(github_url))
-                                    # else:
-                                    #     TODO: fix pastebin or similar service
-                                    #     url = pastebin.paste(self.pastebin['token'], cmd_result.output, paste_name=cmd_result.cmd + "_output", paste_private="unlisted", paste_expire_date='1H', paste_format=None)
-                                    #     self.send(message.create_response(url))
-                                else:
-                                    self.send(message.create_response(cmd_result.output))
+                        result = await(self.handle_message(message))
+                        module_logger.debug("async: " + str(result))
+                        # text: str = message.text
+                        # module_logger.debug(f"text: {text}")
+                        # # handle responses from auth bots
+                        # cmd_result: CommandResult = None
+                        # if self.auth and self.auth.gateway is message.gateway:
+                        #     cmd_result = self.auth.handle(message)
+                        # if text.startswith(self.prefix):
+                        #     module_logger.debug(f"command: '{text}' by {message.username}")
+                        #     cmd=text[1:]
+                        #     cmd_result: CommandResult = self.call(cmd=cmd, context=CommandContext(message))
+                        # if cmd_result:
+                        #     # response = message.username + ": " + ret
+                        #     if cmd_result.output:
+                        #         module_logger.debug(f"return value: {cmd_result.output}")
+                        #         if '\n' in cmd_result.output:
+                        #             # if cmd_result.help or not self.pastebin or 'token' not in self.pastebin:
+                        #                 #TODO: if return value is multiline.. git wiki
+                        #                 github_url = self.wiki.upload(f"command/{cmd_result.cmd}", cmd_result.output, is_help=cmd_result.is_help)
+                        #                 self.send(message.create_response(github_url))
+                        #             # else:
+                        #             #     TODO: fix pastebin or similar service
+                        #             #     url = pastebin.paste(self.pastebin['token'], cmd_result.output, paste_name=cmd_result.cmd + "_output", paste_private="unlisted", paste_expire_date='1H', paste_format=None)
+                        #             #     self.send(message.create_response(url))
+                        #         else:
+                        #             self.send(message.create_response(cmd_result.output))
 
             except requests.exceptions.ConnectionError as err:
                 module_logger.exception("api endpoint not running")
@@ -435,3 +422,31 @@ class LibCord:
             except Exception as ex:
                 module_logger.exception("unknown error")
             sleep(0.1)
+    
+    async def handle_message(self, message: Message):
+        module_logger.debug(message)
+        text: str = message.text
+        module_logger.debug(f"text: {text}")
+        # handle responses from auth bots
+        cmd_result: CommandResult = None
+        if self.auth and self.auth.gateway is message.gateway:
+            cmd_result = self.auth.handle(message)
+        if text.startswith(self.prefix):
+            module_logger.debug(f"command: '{text}' by {message.username}")
+            cmd=text[1:]
+            cmd_result: CommandResult = self.call(cmd=cmd, context=CommandContext(message))
+        if cmd_result:
+            # response = message.username + ": " + ret
+            if cmd_result.output:
+                module_logger.debug(f"return value: {cmd_result.output}")
+                if '\n' in cmd_result.output:
+                    # if cmd_result.help or not self.pastebin or 'token' not in self.pastebin:
+                        #TODO: if return value is multiline.. git wiki
+                        github_url = self.wiki.upload(f"command/{cmd_result.cmd}", cmd_result.output, is_help=cmd_result.is_help)
+                        self.send(message.create_response(github_url))
+                    # else:
+                    #     TODO: fix pastebin or similar service
+                    #     url = pastebin.paste(self.pastebin['token'], cmd_result.output, paste_name=cmd_result.cmd + "_output", paste_private="unlisted", paste_expire_date='1H', paste_format=None)
+                    #     self.send(message.create_response(url))
+                else:
+                    self.send(message.create_response(cmd_result.output))

@@ -30,3 +30,9 @@ def init(cord: LibCord):
         """test multiline output."""
         print(f"testing multiline")
         print("\nnewline"*i)
+
+    @test.register("identify")
+    def test_auth(context: Message, nick: str):
+        """test nickserv"""
+        print(f"testing auth module")
+        cord.auth.identify(auth_req=AuthRequest(nickname=context.message.username, account=contex.message.account))

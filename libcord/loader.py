@@ -27,10 +27,6 @@ class ModLoader():
         assert(module in modules)
         module_logger.debug(f"reload('{module}')")
         _basename = 'libcord.modules.{}'.format(module)
-        
         mod = sys.modules[_basename]
-        
         reload(mod)
-
-        # self.tiles = mod.__dict__['tiles']
         mod.init(self.cord)
