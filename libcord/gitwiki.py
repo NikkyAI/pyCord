@@ -40,8 +40,8 @@ class Gitwiki:
         # diff = self.repo.git.diff('HEAD~1..HEAD', name_only=True)
         diff = self.repo.index.diff(self.repo.head.commit)
         if diff:
-            for diff_entry in diff:
-                module_logger.debug(yaml.dump(diff_entry))
+            # for diff_entry in diff:
+            #     module_logger.debug(yaml.dump(diff_entry))
             self.repo.index.commit(f"added {filename}")
             self.repo.remotes.origin.push()
         return self.web_url_base + "/" + "/".join(file_path.parts)

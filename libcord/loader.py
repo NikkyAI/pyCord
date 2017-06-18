@@ -13,8 +13,6 @@ class ModLoader():
     def load_all(self):
         for mod in modules:
             self.load(mod)
-        for mod in modules:
-            self.reload(mod)
 
     def load(self, module: str):
         assert(module in modules)

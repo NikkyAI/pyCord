@@ -1,5 +1,6 @@
+import asyncio
 from collections import namedtuple
-from typing import Dict, Callable, Any, Iterable
+from typing import Dict, Callable, Any, Iterable, List
 import argparse
 from collections import OrderedDict
 from enum import Enum
@@ -15,14 +16,14 @@ from time import sleep
 import traceback
 import yaml
 import copy
+import re
+from re import _pattern_type
 
 from .message import Message
 from .gitwiki import Gitwiki
-from .authenticator import Authenticator
+from .authenticator import Authenticator, AuthUser
 
 module_logger = logging.getLogger('libcord.core')
-
-
 
 class CommandContext(object):
     def __init__(self, message: Message):
@@ -52,10 +53,10 @@ class ResultType(Enum):
     HELP = 1
 
 class Command(object):
-    def __init__(self, func: Callable[[Any], Any] = None, parser: argparse.ArgumentParser = None):
+    def __init__(self, func: Callable[[Any], Any] = None, parser: argparse.ArgumentParser = None, regex_func: Callable[[Any], Any] = None):
         self.func = func
         self.parser = parser
-
+        self.regex_func = regex_func
     NONE = None
 
     def __repr__(self):
@@ -70,8 +71,11 @@ class CommandHandler:
         self.cmd_map = dict()
         self.func_arg_map = {}
         self.func_context_map = {}
+        self.func_user_map = {}
+        self.func_text_map = {}
+        self.func_pattern_map = {}
 
-    def register(self, prog: str, description: str = None):
+    def register(self, prog: str, description: str = None, regex=None):
         """
         registers a function as a given command name, with a optional description
         """
@@ -95,6 +99,26 @@ class CommandHandler:
                 if command_context in argspec.annotations and argspec.annotations[command_context] != CommandContext:
                     module_logger.fatal(f"function {func} argument {command_context} type: { argspec.annotations[command_context]} is not matching type {CommandContext}")
                     self.func_context_map[func] = command_context = False
+            
+            command_user = self.func_user_map.get(func, 'user')
+            if command_user:
+                if command_user not in argspec.args:
+                    module_logger.warning(f"function {func} missing command_user argument {command_user}")
+                    self.func_user_map[func] = command_user = False
+                if command_user in argspec.annotations and argspec.annotations[command_user] != AuthUser:
+                    module_logger.fatal(f"function {func} argument {command_user} type: { argspec.annotations[command_user]} is not matching type {AuthUser}")
+                    self.func_user_map[func] = command_user = False
+
+            command_text = self.func_text_map.get(func, 'text')
+            if command_text:
+                if command_text not in argspec.args:
+                    module_logger.warning(f"function {func} missing command_text argument {command_text}")
+                    self.func_text_map[func] = command_text = False
+                if command_text in argspec.annotations and argspec.annotations[command_text] != str:
+                    module_logger.fatal(f"function {func} argument {command_text} type: { argspec.annotations[command_text]} is not matching type {str}")
+                    self.func_text_map[func] = command_text = False
+
+            command_pattern = self.func_pattern_map.get(func)
 
             defaults = {}
             if argspec.defaults:
@@ -104,6 +128,13 @@ class CommandHandler:
 
             def add_argument(argument: str, data: dict):
                 if dest == command_context:
+                    module_logger.info('context does not generate arguments')
+                    return
+                if dest == command_user:
+                    module_logger.info('user does not generate arguments')
+                    return
+                if dest == command_text:
+                    module_logger.info('text does not generate arguments')
                     return
                 # https://docs.python.org/3.6/library/argparse.html#the-add-argument-method
                 # TODO: figure out default values
@@ -156,11 +187,11 @@ class CommandHandler:
                     data['type'] = argspec.annotations[dest]
                 module_logger.debug(f"generating default argument for non decorated argument: {dest}")
                 add_argument(argument=dest, data=data)
-
+                
             '''
             splits args and executes method, handles capturing output
             '''
-            def execute(*args: str, context: CommandContext = None) -> CommandResult:
+            def execute(*args: str, text: str, context: CommandContext = None, user: AuthUser = None) -> CommandResult:
                 module_logger.debug(f"\ncalling: {parser.prog}")
                 module_logger.debug(f"args: {args}")
 
@@ -223,8 +254,18 @@ class CommandHandler:
                         module_logger.debug(f"command context: {command_context}")
                         arguments[command_context] = context
                     
+                    if command_user:
+                        module_logger.debug(f"auth_user: {user}")
+                        arguments[command_user] = user
+
+                    if command_text:
+                        module_logger.debug(f"command_text: {text}")
+                        arguments[command_text] = text
+                    
                     try:
                         sys.stdout = mystdout = StringIO()
+
+                        module_logger.debug(arguments)
 
                         ret = func(**arguments)
                         if type(ret) is str:
@@ -246,6 +287,54 @@ class CommandHandler:
             cmd: Command = self.cmd_map.get(prog, Command())
             cmd.func = execute
             cmd.parser = parser
+
+            if command_pattern:
+                def exec_regex(text: str, context: CommandContext = None, user: AuthUser = None) -> CommandResult:#
+                    m = command_pattern.fullmatch(text)
+                    if m:
+                        module_logger.debug(f"\ncalling: {parser.prog}")
+                        module_logger.debug(f"args: {args}")
+
+                        arguments = m.groupdict()
+
+                        is_help = False
+
+                        if command_context:
+                            module_logger.debug(f"command context: {command_context}")
+                            arguments[command_context] = context
+                        
+                        if command_user:
+                            module_logger.debug(f"auth_user: {user}")
+                            arguments[command_user] = user
+
+                        if command_text:
+                            module_logger.debug(f"command_text: {text}")
+                            arguments[command_text] = text
+
+                        try:
+                            old_stdout = sys.stdout
+                            sys.stdout = mystdout = StringIO()
+    
+                            module_logger.debug(arguments)
+
+                            ret = func(**arguments)
+                            if type(ret) is str:
+                                print(ret)
+                            elif type(ret) is ResultType:
+                                if ret == ResultType.HELP:
+                                    is_help = True
+                            # TODO check if it is HELP
+                        except Exception as ex:
+                            module_logger.exception("exception executing function")
+                            print(traceback.format_exc())
+                        finally:
+                            sys.stdout = old_stdout
+                    
+                        output = mystdout.getvalue().rstrip()
+                        module_logger.debug(f"command output: {output}")
+                        return CommandResult(output=output, is_help=is_help)
+                    return None
+                cmd.regex_func = exec_regex
             self.cmd_map[prog] = cmd
             return execute
         return func_wrapper
@@ -279,24 +368,36 @@ class CommandHandler:
             else:
                 self.func_context_map[func] = False
             return func
+        return func_wrapper
 
-    def call(self, cmd: str, context: CommandContext = CommandContext.NONE) -> CommandResult:
-        try:
-            tokens = shlex.split(cmd)
-            prog = tokens[0]
-            args = tokens[1:]
-            cmd: Command = self.cmd_map.get(prog)
-            func = cmd.func
-            if func:
-                exec_result: CommandResult = func(context=context, *args)
-                exec_result.cmd = prog
-                return exec_result
-            else:
-                return CommandResult(output=f"no function {prog} found", cmd=None)
-        except Exception as ex:
-            module_logger.exception("Error parsing input")
-            return CommandResult(output=f"Error parsing input: {str(ex)}", cmd=None)
-            # return traceback.format_exc() #TODO: get better message
+    def regex(self, pattern_data):
+        def func_wrapper(func):
+            if type(pattern_data) == str:
+                pattern = re.compile(pattern_data)
+            elif type(pattern_data) == _pattern_type: pattern = pattern_data
+            module_logger.debug(f"regex: {type(pattern)}")
+            self.func_pattern_map[func] = pattern
+
+            return func
+        return func_wrapper
+
+    # def call(self, cmd: str, context: CommandContext = CommandContext.NONE) -> CommandResult:
+    #     try:
+    #         tokens = shlex.split(cmd)
+    #         prog = tokens[0]
+    #         args = tokens[1:]
+    #         cmd: Command = self.cmd_map.get(prog)
+    #         func = cmd.func
+    #         if func:
+    #             exec_result: CommandResult = func(context=context, *args)
+    #             exec_result.cmd = prog
+    #             return exec_result
+    #         else:
+    #             return CommandResult(output=f"no function {prog} found", cmd=None)
+    #     except Exception as ex:
+    #         module_logger.exception("Error parsing input")
+    #         return CommandResult(output=f"Error parsing input: {str(ex)}", cmd=None)
+    #         # return traceback.format_exc() #TODO: get better message
     
     def list(self) -> Dict[str, Command]:
         """
@@ -329,7 +430,9 @@ class LibCord:
         self.wiki = Gitwiki(url="git@github.com:NikkyAI/pyCord.wiki.git", web_url_base="https://github.com/NikkyAI/pyCord/wiki")
         if token:
             self.session.headers = {'Authorization': f"Bearer {token}"}
-    
+        
+        self.q = asyncio.Queue()
+
     def create_handler(self, name: str) -> CommandHandler:
         handler: CommandHandler = CommandHandler(name=name)
         self.cmd_handlers[name] = handler
@@ -344,15 +447,11 @@ class LibCord:
         module_logger.debug(f"message as json: {json.dumps(dict_dump)}")
         url = f"http://{self.host}:{self.port}/api/message"
         response = self.session.post(url, json=dict_dump)
-        response.raise_for_status()
-    
-    def start(self):
-        self.loader.load_all()
-        self.run()
+        response.raise_for_status()    
 
-    def call(self, cmd: str, context: CommandContext = CommandContext.NONE) -> CommandResult:
+    def call(self, text: str, context: CommandContext = CommandContext.NONE, user: AuthUser = None) -> CommandResult:
         try:
-            tokens = shlex.split(cmd)
+            tokens = shlex.split(text)
             prog = tokens[0]
             args = tokens[1:]
             cmd: Command = None
@@ -366,7 +465,7 @@ class LibCord:
                 return CommandResult(output=f"no function {prog} found", cmd=None)
             func = cmd.func
             if func:
-                exec_result: CommandResult = func(context=context, *args)
+                exec_result: CommandResult = func(context=context, user=user, text=text, *args)
                 exec_result.cmd = prog
                 return exec_result
             else:
@@ -375,8 +474,65 @@ class LibCord:
             module_logger.exception("Error parsing input")
             return CommandResult(output=f"Error parsing input: {str(ex)}", cmd=None)
             # return traceback.format_exc() #TODO: get better message
+    
+    def call_regex(self, text: str, context: CommandContext = CommandContext.NONE, user: AuthUser = None) -> List[CommandResult]:
+        try:
+            results = list()
+            for handler_name, cmd_handler in self.cmd_handlers.items():
+                for prog, cmd in cmd_handler.cmd_map.items():
+                    if cmd.regex_func:
+                        # TODO: wrap in try catch ?
+                        result = cmd.regex_func(text=text, context=context, user=user)
+                        if result:
+                            result.cmd = prog
+                            results.append(result)
+            return results
+        except Exception as ex:
+            module_logger.exception("Error parsing input")
+            return CommandResult(output=f"Error parsing input: {str(ex)}", cmd=None)
+            # return traceback.format_exc() #TODO: get better message
+    
+    async def consume_message(self):
+        while True:
+            message: Message = await self.q.get()
+            module_logger.debug(message)
+            text: str = message.text
+            module_logger.debug(f"text: {text}")
+            # handle responses from auth bots
+            cmd_result: CommandResult = None
+            user = self.auth.identify(message.username, message.account)
+            results = self.call_regex(text=text, context=CommandContext(message), user=user)
+            if len(results):
+                for regex_result in results:
+                    if regex_result.output:
+                        module_logger.debug(f"return value: {regex_result.output}")
+                        if '\n' in regex_result.output:
+                            github_url = self.wiki.upload(f"command/{regex_result.cmd}", regex_result.output, is_help=regex_result.is_help)
+                            self.send(message.create_response(github_url))
+                        else:
+                            self.send(message.create_response(regex_result.cmd+": "+regex_result.output))
+            if text.startswith(self.prefix):
+                module_logger.debug(f"command: '{text}' by {message.username}")
+                cmd=text[1:]
+                cmd_result: CommandResult = self.call(text=cmd, context=CommandContext(message), user=user)
+            if cmd_result:
+                # response = message.username + ": " + ret
+                if cmd_result.output:
+                    module_logger.debug(f"return value: {cmd_result.output}")
+                    if '\n' in cmd_result.output:
+                        # if cmd_result.help or not self.pastebin or 'token' not in self.pastebin:
+                            #TODO: if return value is multiline.. git wiki
+                            github_url = self.wiki.upload(f"command/{cmd_result.cmd}", cmd_result.output, is_help=cmd_result.is_help)
+                            self.send(message.create_response(github_url))
+                        # else:
+                        #     TODO: fix pastebin or similar service
+                        #     url = pastebin.paste(self.pastebin['token'], cmd_result.output, paste_name=cmd_result.cmd + "_output", paste_private="unlisted", paste_expire_date='1H', paste_format=None)
+                        #     self.send(message.create_response(url))
+                    else:
+                        self.send(message.create_response(cmd_result.output))
 
-    def run(self):
+
+    async def produce_message(self):
         while True:
             try:
                 url = f"http://{self.host}:{self.port}/api/messages"
@@ -387,33 +543,10 @@ class LibCord:
                     for message_dict in msg_list:
                         message: Message = Message(**message_dict)
                         # message.libcord = self
-                        result = await(self.handle_message(message))
-                        module_logger.debug("async: " + str(result))
-                        # text: str = message.text
-                        # module_logger.debug(f"text: {text}")
-                        # # handle responses from auth bots
-                        # cmd_result: CommandResult = None
-                        # if self.auth and self.auth.gateway is message.gateway:
-                        #     cmd_result = self.auth.handle(message)
-                        # if text.startswith(self.prefix):
-                        #     module_logger.debug(f"command: '{text}' by {message.username}")
-                        #     cmd=text[1:]
-                        #     cmd_result: CommandResult = self.call(cmd=cmd, context=CommandContext(message))
-                        # if cmd_result:
-                        #     # response = message.username + ": " + ret
-                        #     if cmd_result.output:
-                        #         module_logger.debug(f"return value: {cmd_result.output}")
-                        #         if '\n' in cmd_result.output:
-                        #             # if cmd_result.help or not self.pastebin or 'token' not in self.pastebin:
-                        #                 #TODO: if return value is multiline.. git wiki
-                        #                 github_url = self.wiki.upload(f"command/{cmd_result.cmd}", cmd_result.output, is_help=cmd_result.is_help)
-                        #                 self.send(message.create_response(github_url))
-                        #             # else:
-                        #             #     TODO: fix pastebin or similar service
-                        #             #     url = pastebin.paste(self.pastebin['token'], cmd_result.output, paste_name=cmd_result.cmd + "_output", paste_private="unlisted", paste_expire_date='1H', paste_format=None)
-                        #             #     self.send(message.create_response(url))
-                        #         else:
-                        #             self.send(message.create_response(cmd_result.output))
+                        # result = self.handle_message(message) #TODO: look up await ?
+                        
+                        await self.q.put(message)
+                        # module_logger.debug("added: " + str(message))
 
             except requests.exceptions.ConnectionError as err:
                 module_logger.exception("api endpoint not running")
@@ -421,32 +554,12 @@ class LibCord:
 
             except Exception as ex:
                 module_logger.exception("unknown error")
-            sleep(0.1)
+            await asyncio.sleep(0.1)
     
-    async def handle_message(self, message: Message):
-        module_logger.debug(message)
-        text: str = message.text
-        module_logger.debug(f"text: {text}")
-        # handle responses from auth bots
-        cmd_result: CommandResult = None
-        if self.auth and self.auth.gateway is message.gateway:
-            cmd_result = self.auth.handle(message)
-        if text.startswith(self.prefix):
-            module_logger.debug(f"command: '{text}' by {message.username}")
-            cmd=text[1:]
-            cmd_result: CommandResult = self.call(cmd=cmd, context=CommandContext(message))
-        if cmd_result:
-            # response = message.username + ": " + ret
-            if cmd_result.output:
-                module_logger.debug(f"return value: {cmd_result.output}")
-                if '\n' in cmd_result.output:
-                    # if cmd_result.help or not self.pastebin or 'token' not in self.pastebin:
-                        #TODO: if return value is multiline.. git wiki
-                        github_url = self.wiki.upload(f"command/{cmd_result.cmd}", cmd_result.output, is_help=cmd_result.is_help)
-                        self.send(message.create_response(github_url))
-                    # else:
-                    #     TODO: fix pastebin or similar service
-                    #     url = pastebin.paste(self.pastebin['token'], cmd_result.output, paste_name=cmd_result.cmd + "_output", paste_private="unlisted", paste_expire_date='1H', paste_format=None)
-                    #     self.send(message.create_response(url))
-                else:
-                    self.send(message.create_response(cmd_result.output))
+    def start(self):
+        module_logger.info("starting loop")
+        self.loader.load_all()
+        loop = asyncio.get_event_loop()
+        loop.create_task(self.produce_message())
+        loop.create_task(self.consume_message())
+        loop.run_forever()

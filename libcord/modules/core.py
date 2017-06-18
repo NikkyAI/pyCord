@@ -1,5 +1,6 @@
 from libcord import LibCord, Command, ResultType
 from importlib import reload
+from libcord.authenticator import AuthUser
 
 def init(cord: LibCord):
     # config = None
@@ -42,13 +43,12 @@ def init(cord: LibCord):
         return ResultType.HELP
 
     @core.register("reload")
-    def reload_function(module: str):
+    def reload_function(user: AuthUser, module: str):
         """
         reloads a module.
         """
-        cord.loader.reload(module)
-        print(f"reloaded {module}")
-        # for group, cmd_group in cord.cmd_handlers.items():
-        #     print(group.upper())
-        #     for key, cmd in cmd_group.cmd_map.items():
-        #         print(f"\tcommand {key}: {cmd}")
+        if user and user.username == 'Nikky#4527':
+            cord.loader.reload(module)
+            print(f"reloaded {module}")
+        else:
+            print('not authorized')
